@@ -1,8 +1,8 @@
 /* 
- * @project: js-xmpp-client-ws
+ * @project: xmpp-javascript-library
  * @author: Sachin Puri
  * @website: http://www.sachinpuri.com
- * @repository URL: https://github.com/sachinpuri/js-xmpp-client-ws 
+ * @repository URL: https://github.com/sachinpuri/xmpp-javascript-library
  *  
  */
 
@@ -350,18 +350,6 @@ var xmlGenerator = {
         this.tag = "";
         return tag;
     }
-}
-
-xmppClient.stanzas = {
-    message:function(){
-        
-    },
-    presence:function(){
-        
-    },
-    iq:function(){
-        
-    }
 };
 
 xmppClient.carbon = {
@@ -386,7 +374,6 @@ xmppClient.carbon = {
 var parser={
     parseServerResponse:function(xml){
         var rootTagName = $(xml)[0].tagName;
-        //log(rootTagName + ": " + xml);
         xml = $.parseXML(xml);
         switch(rootTagName){
             case "STREAM:FEATURES":
@@ -481,7 +468,6 @@ var parser={
         }
     },
     parseRosterEntries:function(xml){
-        log("parsing","parsing roster");
         var jid=null;
         var name=null;
         var subscription=null;
@@ -633,40 +619,11 @@ var parser={
     }
 };
 
-xmppClient.Exception = {
-    warning:function(){
-        
-    }
-};
-
-xmppClient.interface={
-    onMessageReceive:function(callbackFunction){
-        xmppClient.onMessageReceive=callbackFunction;
-    },
-    onRosterReceive:function(callbackFunction){
-        xmppClient.onRosterReceive=callbackFunction;
-    },
-    onPresenceReceive:function(callbackFunction){
-        xmppClient.onPresenceReceive=callbackFunction;
-    },
-    onSubscriptionRequestReceive:function(callbackFunction){
-        xmppClient.onSubscriptionRequestReceive=callbackFunction;
-    },
-    onTypingStatusChange:function(callbackFunction){
-        xmppClient.onTypingStatusChange=callbackFunction;
-    },
-    onDelivered:function(callbackFunction){
-        xmppClient.onDelivered=callbackFunction;
-    }
-};
-
-function log(tag, data){
-    if(xmppClient.debug === 1){
-        if(arguments.length === 1){
-            data = tag;
-            tag = "Misc";
-        }
-        console.log(tag + ": " + data);
+function log(){
+    if(arguments.length === 1){
+    console.log(arguments[0]);
+}else{
+    console.log(arguments[0] + ": " + arguments[1]);
     }
 }
 
