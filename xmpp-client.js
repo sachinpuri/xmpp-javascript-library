@@ -32,6 +32,7 @@ var xmppClient={
     onUnblocked:null,
     onMUCRoomsReceive:null,
     onMUCUsersReceive:null,
+    onError:null,
     bareJid:null,
     fullJid:null,
     archiveLimit:10,
@@ -43,7 +44,9 @@ var xmppClient={
         CLIENT:'jabber:client',
         ROSTER:'jabber:iq:roster',
         DISCO_ITEMS:'http://jabber.org/protocol/disco#items',
-        DISCO_INFO:'http://jabber.org/protocol/disco#info'
+        DISCO_INFO:'http://jabber.org/protocol/disco#info',
+        MUC:'http://jabber.org/protocol/muc',
+        MUC1:'http://jabber.org/protocol/muc#user'
     },    
     connect:function(params){
         
@@ -111,6 +114,7 @@ var xmppClient={
         if(!type){
             type='chat';
         }
+        
         if(type==xmppClient.message.Type.GROUPCHAT){
         var data = xmlGenerator
                 .start("message", {id:messageId, from:this.fullJid, to:toJID, type:type})
@@ -249,16 +253,26 @@ xmppClient.roster = {
 };
 
 xmppClient.message = {
-    Type:{
+    Via:{
         CHAT:'chat',
         CARBON:'carbon',
         ARCHIVE:'archive',
-        OFFLINE:'offline',
-        GROUPCHAT:'groupchat'
+        OFFLINE:'offline'        
+    },
+    Type:{
+        CHAT:'chat',
+        ERROR:'error',
+        GROUPCHAT:'groupchat',
+        HEADLINE:'headline',
+        NORMAL:'normal'
     }
 }
 
 xmppClient.presence = {
+    UserType:{
+        USER:'user',
+        ROOM:'room'
+    },
     Type:{
         PROBE:'probe', //A request for an entity's current presence; SHOULD be generated only by a server on behalf of a user. 
         SUBSCRIBE:'subscribe', //The sender wishes to subscribe to the recipient's presence. 
@@ -266,7 +280,8 @@ xmppClient.presence = {
         AVAILABLE:'available', //The sender is available for chat (not part of Core XMPP)
         UNAVAILABLE:'unavailable', //The sender is no longer available for communication. 
         UNSUBSCRIBE:'unsubscribe', //The sender is unsubscribing from the receiver's presence. 
-        UNSUBSCRIBED:'unsubscribed' //The subscription request has been denied or a previously granted subscription has been canceled. 
+        UNSUBSCRIBED:'unsubscribed', //The subscription request has been denied or a previously granted subscription has been canceled. 
+        ERROR:'error' //An error has occurred regarding processing or delivery of a previously-sent presence stanza. 
     },
     Show:{
         AWAY:'away', //The entity or resource is temporarily away. 
@@ -425,6 +440,17 @@ xmppClient.carbon = {
 };
 
 xmppClient.MUC = {
+    Role:{
+        moderator:'moderator',
+        participant:'participant',
+        visitor:'visitor'
+    },
+    Affiliation:{
+        owner:'owner',
+        admin:'admin',
+        member:'member',
+        none:'none'
+    },
     StatusCode:{
         100:"REAL_JID_EXPOSED",
         110:"SELF_PRESENCE",
@@ -476,6 +502,11 @@ xmppClient.parser={
     parseServerResponse:function(xml){
         var rootTagName = $(xml)[0].tagName;
         xml = $.parseXML(xml);
+        var type = $(xml).find(rootTagName.toLowerCase()).attr('type');
+        
+        if(type === 'error'){
+            this.parseError(xml);
+        }else{
         switch(rootTagName){
             case "STREAM:FEATURES":
                 if($(xml).find("mechanism").length>0){
@@ -554,13 +585,25 @@ xmppClient.parser={
                 this.parsePresence(xml);
                 break;
             case "MESSAGE":
-                this.parseMessages(xml);
+                    if($(xml).find("message > fin").length>0){
+                        var obj = {};
+                        obj['jid']=xmppClient.archiveLastRequestedFor;
+                        obj['first']=$(xml).find("iq > fin > set > first").text();
+                        obj['last']=$(xml).find("iq > fin > set > last").text();
+                        obj['count']=$(xml).find("iq > fin > set > count").text();
+                        obj['complete']=$(xml).find("iq > fin").attr("complete");
+                        xmppClient.archiveFirstId[xmppClient.archiveLastRequestedFor] = $(xml).find("iq > fin > set > first").text();
+                        xmppClient.onArchiveReceive(obj);                    
+                    }else{
+                        this.parseMessages(xml);
+                    }
                 break;
             case "FAILURE":
                 if($(xml).find("not-authorized").length>0){
                     xmppClient.onFailure("not-authorized");
                 }
                 break;
+            }
         }
             
         if($(xml).find("body").attr("type")==="terminate"){
@@ -570,6 +613,16 @@ xmppClient.parser={
                 
             }
         }
+    },
+    parseError:function(xml){         
+        var error = xmppClient.pojo.Error(
+            $(xml).find("error").attr("code"), 
+            $(xml).find("error > text").text(),
+            $(xml).find("error").attr("type"),
+            $(xml).find("error > text").attr('xmlns'),
+            $(xml).find("error").children().get(0).tagName
+        );
+        xmppClient.onError(error);
     },
     parseRosterEntries:function(xml){
         var jid=null;
@@ -612,22 +665,24 @@ xmppClient.parser={
         if($(xml).find("sent").length>0 && $(xml).find("sent").attr("xmlns") === "urn:xmpp:carbons:2"){ 
             //Carbon Messages
             if($(xml).find("body").length>0){
-                var objMessage = xmppClient.pojo.Message(xmppClient.message.Type.CARBON);
+                var objMessage = xmppClient.pojo.Message(xmppClient.message.Via.CARBON);
                 objMessage.id = $(xml).find("forwarded > message").attr('id');
                 objMessage.from = $(xml).find("forwarded > message").attr('from');
                 objMessage.to = $(xml).find("forwarded > message").attr('to');
                 objMessage.text = $(xml).find("forwarded > message > body").text();
+                objMessage.type = $(xml).find("message").attr('type');
 
                 xmppClient.onMessageReceive(objMessage);
             }
             
         }else if($(xml).find("forwarded").length>0){ 
             //Archive
-            var objMessage = xmppClient.pojo.Message(xmppClient.message.Type.ARCHIVE);
+            var objMessage = xmppClient.pojo.Message(xmppClient.message.Via.ARCHIVE);
             objMessage.id = $(xml).find("forwarded > message").attr('id');
             objMessage.from = $(xml).find("forwarded > message").attr('from');
             objMessage.to = $(xml).find("forwarded > message").attr('to');
             objMessage.text = $(xml).find("forwarded > message > body").text();
+            objMessage.type = $(xml).find("forwarded > message").attr('type');
 
             if($(xml).find("delay").length>0){
                 objMessage.delay.text = $(xml).find("delay").text();
@@ -639,12 +694,12 @@ xmppClient.parser={
         }else if($(xml).find("body").length>0){
             var objMessage;
 
-            if($(xml).find("message > delay").length==0 || $(xml).find("message").attr('type') === xmppClient.message.Type.GROUPCHAT){ 
+            if($(xml).find("message > delay").length==0 || $(xml).find("message").attr('type') === xmppClient.message.Via.GROUPCHAT){ 
                 //Live chat
                 objMessage = xmppClient.pojo.Message($(xml).find("message").attr('type'));
             }else{
                 //Offline Mesage
-                objMessage = xmppClient.pojo.Message(xmppClient.message.Type.OFFLINE);
+                objMessage = xmppClient.pojo.Message(xmppClient.message.Via.OFFLINE);
                 objMessage.delay.text = $(xml).find("message > delay").text();
                 objMessage.delay.time = $(xml).find("message > delay").attr("stamp");                
             }
@@ -653,6 +708,7 @@ xmppClient.parser={
             objMessage.from = $(xml).find("message").attr('from');
             objMessage.to = $(xml).find("message").attr('to');
             objMessage.text = $(xml).find("message").find("body").text();
+            objMessage.type = $(xml).find("message").attr('type');
 
             if($(xml).find("result").length === 0 || $(xml).find("message > result").attr("xmlns") !== "urn:xmpp:mam:1"){
                 if($(xml).find("request").length>0 && $(xml).find("message > request").attr("xmlns")==="urn:xmpp:receipts"){
@@ -682,7 +738,11 @@ xmppClient.parser={
             
             var from=$(this).attr("from");
             var type=$(this).attr("type"); 
+            var userType = 'user';
             var status = "";
+            var affiliation = "";
+            var role = "";
+            var statusCode=[];
             
             if($(this).find("status").length > 0 && $(this).find("status").text().length>0){
                 status = $(this).find("status").text();
@@ -692,9 +752,20 @@ xmppClient.parser={
                 type="available";
             }
             
+            if($(this).find("x") && ($(this).find("x").attr('xmlns') === xmppClient.NS.MUC || $(this).find("x").attr('xmlns') === xmppClient.NS.MUC1)){
+                userType = 'room';
+                $(this).find("x > item").each(function(){
+                    role = $(this).attr('role');
+                    affiliation = $(this).attr('affiliation');
+                });
+                $(this).find("x > status").each(function(){
+                    statusCode.push($(this).attr('code'));
+                });
+            }
+            
             if(this.jid !== from.split("/")[0]){// ignore if it is user's own presence
                 
-                var presence = xmppClient.pojo.Presence(from, type, status);
+                var presence = xmppClient.pojo.Presence(from, type, status, userType, role, affiliation, statusCode);
                 
                 switch(type){
                     case xmppClient.presence.Type.SUBSCRIBE:
@@ -712,6 +783,7 @@ xmppClient.parser={
                     case xmppClient.presence.Type.AVAILABLE:
                     case xmppClient.presence.Type.UNAVAILABLE:
                         xmppClient.onPresenceReceive(presence);
+                        break;                    
                     default:
                         break;
                 }
@@ -768,27 +840,49 @@ xmppClient.pojo = {
 
         return room;
     },
-    Message:function(type){
+    Message:function(via){
         var message={
             id:'',
             from:'from',
             to:'to',
             text:'text',
-            type:type
+            type:'',
+            via:via
         };
 
-        if(type != xmppClient.message.Type.CHAT){
+        if(via != xmppClient.message.Via.CHAT){
             message.delay = {text: '', time:''};
-}
+        }
 
         return message;
     },
-    Presence:function(from, type, status){
+    Presence:function(from, type, status, userType, role, affiliation, statusCode){
         var self = {
             from:from,
             type:type,
-            status:status
+            status:status,
+            userType:userType
         };
+        
+        if(userType === xmppClient.presence.UserType.ROOM){
+            self.role = role;
+            self.affiliation = affiliation;
+        }
+        
+        if(statusCode){
+            self.statusCode = statusCode;
+        }
+        
+        return self;
+    },
+    Error:function(code, message, type, xmlns, condition){
+        var self = {
+            code:code,
+            message:message,
+            type:type,
+            xmlns:xmlns,
+            condition:condition
+        }
         
         return self;
     }
